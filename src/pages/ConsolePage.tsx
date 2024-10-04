@@ -62,8 +62,8 @@ export function ConsolePage() {
   const apiKey = LOCAL_RELAY_SERVER_URL
     ? ''
     : localStorage.getItem('tmp::voice_api_key') ||
-      prompt('OpenAI API Key') ||
-      '';
+    prompt('OpenAI API Key') ||
+    '';
   if (apiKey !== '') {
     localStorage.setItem('tmp::voice_api_key', apiKey);
   }
@@ -75,20 +75,20 @@ export function ConsolePage() {
    * - RealtimeClient (API client)
    */
   const wavRecorderRef = useRef<WavRecorder>(
-    new WavRecorder({ sampleRate: 24000 })
+    new WavRecorder({ sampleRate: 24000 }),
   );
   const wavStreamPlayerRef = useRef<WavStreamPlayer>(
-    new WavStreamPlayer({ sampleRate: 24000 })
+    new WavStreamPlayer({ sampleRate: 24000 }),
   );
   const clientRef = useRef<RealtimeClient>(
     new RealtimeClient(
       LOCAL_RELAY_SERVER_URL
         ? { url: LOCAL_RELAY_SERVER_URL }
         : {
-            apiKey: apiKey,
-            dangerouslyAllowAPIKeyInBrowser: true,
-          }
-    )
+          apiKey: apiKey,
+          dangerouslyAllowAPIKeyInBrowser: true,
+        },
+    ),
   );
 
   /**
@@ -119,6 +119,7 @@ export function ConsolePage() {
   const [canPushToTalk, setCanPushToTalk] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
   const [memoryKv, setMemoryKv] = useState<{ [key: string]: any }>({});
+  const [hackerNewsStories, setHackerNewsStories] = useState<any[]>([]);
   const [coords, setCoords] = useState<Coordinates | null>({
     lat: 37.775593,
     lng: -122.418137,
@@ -289,7 +290,7 @@ export function ConsolePage() {
    */
   useEffect(() => {
     const conversationEls = [].slice.call(
-      document.body.querySelectorAll('[data-conversation-content]')
+      document.body.querySelectorAll('[data-conversation-content]'),
     );
     for (const el of conversationEls) {
       const conversationEl = el as HTMLDivElement;
@@ -331,7 +332,7 @@ export function ConsolePage() {
               '#0099ff',
               10,
               0,
-              8
+              8,
             );
           }
         }
@@ -353,7 +354,7 @@ export function ConsolePage() {
               '#009900',
               10,
               0,
-              8
+              8,
             );
           }
         }
@@ -409,7 +410,7 @@ export function ConsolePage() {
           return newKv;
         });
         return { ok: true };
-      }
+      },
     );
     client.addTool(
       {
@@ -439,7 +440,7 @@ export function ConsolePage() {
         setMarker({ lat, lng, location });
         setCoords({ lat, lng, location });
         const result = await fetch(
-          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m`
+          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m`,
         );
         const json = await result.json();
         const temperature = {
@@ -452,7 +453,53 @@ export function ConsolePage() {
         };
         setMarker({ lat, lng, location, temperature, wind_speed });
         return json;
-      }
+      },
+    );
+
+    client.addTool(
+      {
+        name: 'get_hacker_news',
+        description: 'Retrieves the top 3 stories from Hacker News.',
+        parameters: {
+          type: 'object',
+          properties: {},
+          required: [],
+        },
+      },
+      async () => {
+        try {
+          // Fetch top story IDs
+          const topStoriesResponse = await fetch(
+            'https://hacker-news.firebaseio.com/v0/topstories.json',
+          );
+          const topStoryIds = await topStoriesResponse.json();
+
+          // Fetch details for top 3 stories
+          const top3Stories = await Promise.all(
+            topStoryIds.slice(0, 3).map(async (id: number) => {
+              const storyResponse = await fetch(
+                `https://hacker-news.firebaseio.com/v0/item/${id}.json`,
+              );
+              return storyResponse.json();
+            }),
+          );
+
+          // Format the results
+          const formattedStories = top3Stories.map((story, index) => ({
+            rank: index + 1,
+            title: story.title,
+            url: story.url,
+            score: story.score,
+          }));
+
+          setHackerNewsStories(formattedStories);
+          return formattedStories;
+        } catch (error) {
+          console.error('Error fetching Hacker News stories:', error);
+          setHackerNewsStories([]);
+          return 'Error fetching Hacker News stories.';
+        }
+      },
     );
 
     // handle realtime events from client + server for event logging
@@ -485,7 +532,7 @@ export function ConsolePage() {
         const wavFile = await WavRecorder.decode(
           item.formatted.audio,
           24000,
-          24000
+          24000,
         );
         item.formatted.file = wavFile;
       }
@@ -565,11 +612,10 @@ export function ConsolePage() {
                         }}
                       >
                         <div
-                          className={`event-source ${
-                            event.type === 'error'
+                          className={`event-source ${event.type === 'error'
                               ? 'error'
                               : realtimeEvent.source
-                          }`}
+                            }`}
                         >
                           {realtimeEvent.source === 'client' ? (
                             <ArrowUp />
@@ -639,7 +685,7 @@ export function ConsolePage() {
                               (conversationItem.formatted.audio?.length
                                 ? '(awaiting transcript)'
                                 : conversationItem.formatted.text ||
-                                  '(item sent)')}
+                                '(item sent)')}
                           </div>
                         )}
                       {!conversationItem.formatted.tool &&
@@ -722,6 +768,26 @@ export function ConsolePage() {
             <div className="content-block-title">set_memory()</div>
             <div className="content-block-body content-kv">
               {JSON.stringify(memoryKv, null, 2)}
+            </div>
+          </div>
+          <div className="content-block kv">
+            <div className="content-block-title">get_hacker_news()</div>
+            <div className="content-block-body content-kv">
+              {hackerNewsStories.length > 0
+                ? hackerNewsStories.map((story) => (
+                  <div key={story.rank}>
+                    {story.rank}.{' '}
+                    <a
+                      href={story.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {story.title}
+                    </a>{' '}
+                    (Score: {story.score})
+                  </div>
+                ))
+                : 'No stories fetched yet'}
             </div>
           </div>
         </div>
