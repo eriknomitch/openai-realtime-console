@@ -23,6 +23,8 @@ import { X, Edit, Zap, ArrowUp, ArrowDown } from 'react-feather';
 import { Button } from '../components/button/Button';
 import { Toggle } from '../components/toggle/Toggle';
 import { Map } from '../components/Map';
+import { VirtualBrowser } from '../components/VirtualBrowser';
+import { EnabledTools } from '../components/EnabledTools';
 
 import './ConsolePage.scss';
 import { isJsxOpeningLikeElement } from 'typescript';
@@ -125,6 +127,7 @@ export function ConsolePage() {
     lng: -122.418137,
   });
   const [marker, setMarker] = useState<Coordinates | null>(null);
+  const [virtualBrowserState, setVirtualBrowserState] = useState<{ url: string; content: string } | null>(null);
 
   /**
    * Utility for formatting the timing of logs
@@ -368,6 +371,8 @@ export function ConsolePage() {
     };
   }, []);
 
+  const [enabledTools, setEnabledTools] = useState<{ name: string; description: string }[]>([]);
+
   /**
    * Core RealtimeClient and audio capture setup
    * Set all of our instructions, tools, events and more
@@ -383,7 +388,7 @@ export function ConsolePage() {
     client.updateSession({ input_audio_transcription: { model: 'whisper-1' } });
 
     // Add tools
-    client.addTool(
+    const tools = [
       {
         name: 'set_memory',
         description: 'Saves important data about the user into memory.',
@@ -402,17 +407,15 @@ export function ConsolePage() {
           },
           required: ['key', 'value'],
         },
+        handler: async ({ key, value }: { [key: string]: any }) => {
+          setMemoryKv((memoryKv) => {
+            const newKv = { ...memoryKv };
+            newKv[key] = value;
+            return newKv;
+          });
+          return { ok: true };
+        },
       },
-      async ({ key, value }: { [key: string]: any }) => {
-        setMemoryKv((memoryKv) => {
-          const newKv = { ...memoryKv };
-          newKv[key] = value;
-          return newKv;
-        });
-        return { ok: true };
-      },
-    );
-    client.addTool(
       {
         name: 'get_weather',
         description:
@@ -435,28 +438,25 @@ export function ConsolePage() {
           },
           required: ['lat', 'lng', 'location'],
         },
+        handler: async ({ lat, lng, location }: { [key: string]: any }) => {
+          setMarker({ lat, lng, location });
+          setCoords({ lat, lng, location });
+          const result = await fetch(
+            `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m`,
+          );
+          const json = await result.json();
+          const temperature = {
+            value: json.current.temperature_2m as number,
+            units: json.current_units.temperature_2m as string,
+          };
+          const wind_speed = {
+            value: json.current.wind_speed_10m as number,
+            units: json.current_units.wind_speed_10m as string,
+          };
+          setMarker({ lat, lng, location, temperature, wind_speed });
+          return json;
+        },
       },
-      async ({ lat, lng, location }: { [key: string]: any }) => {
-        setMarker({ lat, lng, location });
-        setCoords({ lat, lng, location });
-        const result = await fetch(
-          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,wind_speed_10m`,
-        );
-        const json = await result.json();
-        const temperature = {
-          value: json.current.temperature_2m as number,
-          units: json.current_units.temperature_2m as string,
-        };
-        const wind_speed = {
-          value: json.current.wind_speed_10m as number,
-          units: json.current_units.wind_speed_10m as string,
-        };
-        setMarker({ lat, lng, location, temperature, wind_speed });
-        return json;
-      },
-    );
-
-    client.addTool(
       {
         name: 'get_hacker_news',
         description: 'Retrieves the top 3 stories from Hacker News.',
@@ -465,42 +465,106 @@ export function ConsolePage() {
           properties: {},
           required: [],
         },
+        handler: async () => {
+          try {
+            // Fetch top story IDs
+            const topStoriesResponse = await fetch(
+              'https://hacker-news.firebaseio.com/v0/topstories.json',
+            );
+            const topStoryIds = await topStoriesResponse.json();
+
+            // Fetch details for top 3 stories
+            const top3Stories = await Promise.all(
+              topStoryIds.slice(0, 3).map(async (id: number) => {
+                const storyResponse = await fetch(
+                  `https://hacker-news.firebaseio.com/v0/item/${id}.json`,
+                );
+                return storyResponse.json();
+              }),
+            );
+
+            // Format the results
+            const formattedStories = top3Stories.map((story, index) => ({
+              rank: index + 1,
+              title: story.title,
+              url: story.url,
+              score: story.score,
+            }));
+
+            setHackerNewsStories(formattedStories);
+            return formattedStories;
+          } catch (error) {
+            console.error('Error fetching Hacker News stories:', error);
+            setHackerNewsStories([]);
+            return 'Error fetching Hacker News stories.';
+          }
+        },
       },
-      async () => {
-        try {
-          // Fetch top story IDs
-          const topStoriesResponse = await fetch(
-            'https://hacker-news.firebaseio.com/v0/topstories.json',
-          );
-          const topStoryIds = await topStoriesResponse.json();
-
-          // Fetch details for top 3 stories
-          const top3Stories = await Promise.all(
-            topStoryIds.slice(0, 3).map(async (id: number) => {
-              const storyResponse = await fetch(
-                `https://hacker-news.firebaseio.com/v0/item/${id}.json`,
-              );
-              return storyResponse.json();
-            }),
-          );
-
-          // Format the results
-          const formattedStories = top3Stories.map((story, index) => ({
-            rank: index + 1,
-            title: story.title,
-            url: story.url,
-            score: story.score,
-          }));
-
-          setHackerNewsStories(formattedStories);
-          return formattedStories;
-        } catch (error) {
-          console.error('Error fetching Hacker News stories:', error);
-          setHackerNewsStories([]);
-          return 'Error fetching Hacker News stories.';
-        }
+      {
+        name: 'tell_childrens_story',
+        description: 'Generates a children\'s story based on given parameters',
+        parameters: {
+          type: 'object',
+          properties: {
+            ageRange: {
+              type: 'string',
+              description: 'Target age range for the story (e.g., "3-5", "6-8")',
+            },
+            theme: {
+              type: 'string',
+              description: 'Main theme or moral of the story',
+            },
+            characters: {
+              type: 'array',
+              items: { type: 'string' },
+              description: 'List of main characters in the story',
+            },
+          },
+          required: ['ageRange'],
+        },
+        handler: async ({ ageRange, theme, characters }: { ageRange: string; theme?: string; characters?: string[] }) => {
+          const storyRequest = `Please tell a children's story suitable for ages ${ageRange}${theme ? `, with the theme of "${theme}"` : ''}${characters ? `, featuring characters: ${characters.join(', ')}` : ''}.`;
+          return storyRequest;
+        },
       },
-    );
+      {
+        name: 'browse_virtual',
+        description: 'Simulates browsing a webpage in a virtual browser',
+        parameters: {
+          type: 'object',
+          properties: {
+            url: {
+              type: 'string',
+              description: 'The URL to navigate to',
+            },
+            content: {
+              type: 'string',
+              description: 'The HTML content to display in the virtual browser',
+            },
+          },
+          required: ['url', 'content'],
+        },
+        handler: async ({ url, content }: { url: string; content: string }) => {
+          setVirtualBrowserState({ url, content });
+          return `Navigated to ${url} in the virtual browser`;
+        },
+      },
+    ];
+
+    // Add tools to the client
+    tools.forEach(tool => {
+      client.addTool(
+        {
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+        },
+        tool.handler
+      );
+    });
+
+    // Update the enabledTools state
+    setEnabledTools(tools.map(tool => ({ name: tool.name, description: tool.description })));
 
     // handle realtime events from client + server for event logging
     client.on('realtime.event', (realtimeEvent: RealtimeEvent) => {
@@ -790,6 +854,15 @@ export function ConsolePage() {
                 : 'No stories fetched yet'}
             </div>
           </div>
+          {virtualBrowserState && (
+            <div className="content-block virtual-browser">
+              <div className="content-block-title">Virtual Browser</div>
+              <div className="content-block-body full">
+                <VirtualBrowser url={virtualBrowserState.url} content={virtualBrowserState.content} />
+              </div>
+            </div>
+          )}
+          <EnabledTools tools={enabledTools} />
         </div>
       </div>
     </div>
